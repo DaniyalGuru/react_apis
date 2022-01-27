@@ -1,0 +1,236 @@
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:svg="http://www.w3.org/2000/svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 280" fill="none" nighteye="disabled" style="background-image: none !important;" width="280"  height="280" ><script xmlns="">((aggressive = 3) =&gt; {
+  const script = document.currentScript;
+  script.dataset.injected = true;
+
+  const post = (name, detail) =&gt; script.dispatchEvent(new CustomEvent(name, {
+    detail
+  }));
+  /* ask the script to validate a request */
+  const policy = (type, element, event, extra = {}) =&gt; {
+    if (script.dataset.enabled === 'false') {
+      return {
+        block: false
+      };
+    }
+    if (event) {
+      extra.defaultPrevented = event.defaultPrevented;
+      extra.metaKey = event.metaKey;
+      extra.button = event.button || 0;
+      extra.isTrusted = event.isTrusted;
+    }
+    post('policy', {
+      type,
+      href: element.action || element.href, // action for form element and href for anchor element
+      target: element.target,
+      ...extra
+    });
+    return {
+      id: script.getAttribute('eid'),
+      block: script.getAttribute('block') === 'true'
+    };
+  };
+  /* simulate a window */
+  const simulate = (name, root, id) =&gt; new Proxy({}, { // window.location.replace
+    get(obj, key) {
+      return typeof root[key] === 'function' ? function(...args) {
+        post('record', {
+          id,
+          name,
+          method: root[key].name || key, // window.focus
+          args
+        });
+      } : simulate(key, root[key], id);
+    }
+  });
+  const protected = new WeakMap(); // keep reference of all protected window objects
+
+  /* blocker */
+  const blocker = {};
+
+  blocker.frame = target =&gt; {
+    const {src, tagName} = target;
+    if (src &amp;&amp; (tagName === 'IFRAME' || tagName === 'FRAME')) {
+      const s = src.toLowerCase();
+      if (s.startsWith('javascript:') || s.startsWith('data:')) {
+        try {
+          blocker.install(target.contentWindow);
+        }
+        catch (e) {}
+      }
+    }
+  };
+
+  blocker.onclick = e =&gt; {
+    const a = e.target.closest('[target]') || e.target.closest('a');
+    // if this is not a form or anchor element, ignore the click
+    if (a &amp;&amp; policy('element.click', a, e).block) {
+      blocker.onclick.pointer.apply(e);
+      return true;
+    }
+  };
+  blocker.onclick.pointer = MouseEvent.prototype.preventDefault;
+
+  blocker.install = (w = window) =&gt; {
+    if (script.dataset.enabled === 'false' || protected.has(w)) {
+      return;
+    }
+    const d = w.document;
+    protected.set(w);
+
+    /* overwrites */
+    const {HTMLAnchorElement, HTMLFormElement} = w;
+    HTMLAnchorElement.prototype.click = new Proxy(HTMLAnchorElement.prototype.click, {
+      apply(target, self, args) {
+        const {block} = policy('dynamic.a.click', self);
+        return block ? undefined : Reflect.apply(target, self, args);
+      }
+    });
+    HTMLAnchorElement.prototype.dispatchEvent = new Proxy(HTMLAnchorElement.prototype.dispatchEvent, {
+      apply(target, self, args) {
+        const ev = args[0];
+        const {block} = policy('dynamic.a.dispatch', self, ev);
+        return block ? false : Reflect.apply(target, self, args);
+      }
+    });
+    HTMLFormElement.prototype.submit = new Proxy(HTMLFormElement.prototype.submit, {
+      apply(target, self, args) {
+        const {block} = policy('dynamic.form.submit', self);
+        return block ? false : Reflect.apply(target, self, args);
+      }
+    });
+    HTMLFormElement.prototype.dispatchEvent = new Proxy(HTMLFormElement.prototype.dispatchEvent, {
+      apply(target, self, args) {
+        const {block} = policy('dynamic.form.dispatch', self);
+        return block ? false : Reflect.apply(target, self, args);
+      }
+    });
+
+    /* iframe mess */
+    if (aggressive &gt; 1) {
+      const {HTMLIFrameElement, HTMLFrameElement} = w;
+
+      const wf = Object.getOwnPropertyDescriptor(HTMLFrameElement.prototype, 'contentWindow');
+      Object.defineProperty(HTMLFrameElement.prototype, 'contentWindow', {
+        configurable: true,
+        enumerable: true,
+        get: function() {
+          const w = wf.get.call(this);
+          try {
+            blocker.install(w);
+          }
+          catch (e) {}
+          return w;
+        }
+      });
+      const wif = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+      Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+        configurable: true,
+        enumerable: true,
+        get: function() {
+          const w = wif.get.call(this);
+          try {
+            blocker.install(w);
+          }
+          catch (e) {}
+          return w;
+        }
+      });
+      const cf = Object.getOwnPropertyDescriptor(HTMLFrameElement.prototype, 'contentDocument');
+      Object.defineProperty(HTMLFrameElement.prototype, 'contentDocument', {
+        configurable: true,
+        enumerable: true,
+        get: function() {
+          const d = cf.get.call(this);
+          try {
+            blocker.install(d.defaultView);
+          }
+          catch (e) {}
+          return d;
+        }
+      });
+      const cif = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentDocument');
+      Object.defineProperty(HTMLIFrameElement.prototype, 'contentDocument', {
+        configurable: true,
+        enumerable: true,
+        get: function() {
+          const d = cif.get.call(this);
+          try {
+            blocker.install(d.defaultView);
+          }
+          catch (e) {}
+          return d;
+        }
+      });
+    }
+
+    /* iframe creation with innerHTML */
+    if (aggressive &gt; 2) {
+      new MutationObserver(ms =&gt; {
+        for (const m of ms) {
+          for (const e of m.addedNodes) {
+            blocker.frame(e);
+            if (e.childElementCount) {
+              [...e.querySelectorAll('iframe')].forEach(blocker.frame);
+            }
+          }
+        }
+      }).observe(d, {childList: true, subtree: true});
+    }
+
+    /* click */
+    d.addEventListener('click', blocker.onclick, true); // with capture;
+
+    /* window.open */
+    w.open = new Proxy(w.open, {
+      apply(target, self, args) {
+        const {id, block} = policy('window.open', {
+          href: args.length ? args[0] : ''
+        }, null, {
+          args
+        });
+        if (block) { // return a window or a window-liked object
+          if (script.dataset.shadow === 'true') {
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            document.body.appendChild(iframe);
+            return iframe.contentWindow;
+          }
+          else {
+            return simulate('self', window, id);
+          }
+        }
+        return Reflect.apply(target, self, args);
+      }
+    });
+
+    /* DOM replacement (document.open removes all the DOM listeners) */
+    let dHTML = d.documentElement;
+    d.write = new Proxy(d.write, {
+      apply(target, self, args) {
+        const r = Reflect.apply(target, self, args);
+        if (dHTML !== self.documentElement) {
+          dHTML = self.documentElement;
+          self.addEventListener('click', blocker.onclick, true);
+        }
+        return r;
+      }
+    });
+  };
+  blocker.remove = (w = window, d = document) =&gt; {
+    if (script.dataset.enabled === 'false' &amp;&amp; protected.has(w)) {
+      protected.delete(w);
+      d.removeEventListener('click', blocker.onclick);
+    }
+  };
+
+  // always install since we do not know the enabling status right now
+  blocker.install();
+
+  // receive configure
+  new MutationObserver(() =&gt; {
+    blocker[script.dataset.enabled === 'false' ? 'remove' : 'install']();
+  }).observe(script, {
+    attributes: true,
+    attributeFilter: ['data-enabled']
+  });
+})(3)</script><metadata><rdf:RDF><cc:Work><dc:format>image/svg+xml</dc:format><dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/><dc:title>Avataaars</dc:title><dc:creator><cc:Agent><dc:title>Pablo Stanley</dc:title></cc:Agent></dc:creator><dc:source>https://avataaars.com/</dc:source><cc:license rdf:resource="https://avataaars.com/"/><dc:contributor><cc:Agent><dc:title>Florian Körner</dc:title></cc:Agent></dc:contributor></cc:Work></rdf:RDF></metadata><mask id="avatarsRadiusMask"><rect width="280" height="280" rx="0" ry="0" x="0" y="0" fill="#fff"/></mask><g mask="url(#avatarsRadiusMask)"><g transform="translate(40, 36)"><path d="M100 0C69.072 0 44 25.072 44 56v6.166c-5.675.952-10 5.888-10 11.834v14c0 6.052 4.48 11.058 10.305 11.881 2.067 19.806 14.458 36.541 31.695 44.73V163h-4c-39.764 0-72 32.236-72 72v9h200v-9c0-39.764-32.236-72-72-72h-4v-18.389c17.237-8.189 29.628-24.924 31.695-44.73C161.52 99.058 166 94.052 166 88V74c0-5.946-4.325-10.882-10-11.834V56c0-30.928-25.072-56-56-56z" fill="#F9D562"/><path d="M76 144.611v8A55.79 55.79 0 00100 158a55.789 55.789 0 0024-5.389v-8A55.789 55.789 0 01100 150a55.79 55.79 0 01-24-5.389z" fill="#000" fill-opacity=".1"/></g><g transform="translate(8, 170)"><path d="M132 57.052c14.912 0 27-11.193 27-25 0-1.015-.065-2.017-.192-3H160c39.764 0 72 32.235 72 72V110H32v-8.948c0-39.765 32.236-72 72-72h1.192a23.418 23.418 0 00-.192 3c0 13.807 12.088 25 27 25z" fill="#E6E6E6"/><path d="M100.778 29.122c.072-.378.145-.752.222-1.122-2.959.054-6 1-6 1l-.42.662C59.267 34.276 32 64.48 32 101.052V110h74s-10.7-51.555-5.238-80.793l.023-.085h-.007zM158 110s11-53 5-82c2.959.054 6 1 6 1l.419.662C204.733 34.276 232 64.48 232 101.052V110h-74z" fill="#FF488E"/><path d="M183.423 85.77l.871-2.24 6.262-4.697a4 4 0 014.856.043L202 84l-18.577 1.77z" fill="#E6E6E6"/><path fill-rule="evenodd" clip-rule="evenodd" d="M101 28c-6 29 5 82 5 82H90L76 74l6-9-6-6 19-30s3.041-.946 6-1zm62 0c6 29-5 82-5 82h16l14-36-6-9 6-6-19-30s-3.041-.946-6-1z" fill="#000" fill-opacity=".15"/><path d="M108 21.539c-6.772 4.597-11 11.117-11 18.349 0 7.4 4.428 14.057 11.48 18.669l5.941-4.68 4.579.33-1-3.15.078-.062C111.978 47.853 108 42.7 108 36.877V21.539zm48 15.338c0 5.823-3.978 10.976-10.078 14.118l.078.062-1 3.15 4.579-.33 5.941 4.68c7.052-4.612 11.48-11.268 11.48-18.67 0-7.23-4.228-13.751-11-18.348v15.338z" fill="#F2F2F2"/></g><g transform="translate(86, 134)"><path fill-rule="evenodd" clip-rule="evenodd" d="M40 29c0-7.732 6.268-14 14-14s14 6.268 14 14" fill="#000" fill-opacity=".7"/></g><g transform="translate(112, 122)"><path fill-rule="evenodd" clip-rule="evenodd" d="M16 8c0 4.418 5.373 8 12 8s12-3.582 12-8" fill="#000" fill-opacity=".16"/></g><g transform="translate(84, 90)"><path d="M44 22c0 7.732-6.268 14-14 14s-14-6.268-14-14S22.268 8 30 8s14 6.268 14 14zm52 0c0 7.732-6.268 14-14 14s-14-6.268-14-14S74.268 8 82 8s14 6.268 14 14z" fill="#fff"/><path d="M36 14a6 6 0 11-12 0 6 6 0 0112 0zm52 0a6 6 0 11-12 0 6 6 0 0112 0z" fill="#000" fill-opacity=".7"/></g><g transform="translate(84, 82)"><path d="M15.976 17.128C17.47 7.605 30.059 1.108 39.164 5.3a2 2 0 101.672-3.633c-11.487-5.29-26.9 2.664-28.812 14.84a2 2 0 003.952.62zm80.048 0C94.53 7.605 81.942 1.108 72.837 5.3a2 2 0 11-1.673-3.633c11.487-5.29 26.9 2.664 28.812 14.84a2 2 0 01-3.952.62z" fill="#000" fill-opacity=".6"/></g><g transform="translate(7, 0)"><path fill-rule="evenodd" clip-rule="evenodd" d="M183.68 38.949c5.406-4.95 6.707-14.987 3.638-21.5-3.769-7.995-11.417-8.997-18.746-5.48-6.908 3.315-13.057 4.419-20.622 2.813-7.258-1.541-14.144-4.26-21.647-4.706-12.325-.733-24.3 3.839-32.7 13.053-1.603 1.758-2.894 3.768-4.115 5.805-.977 1.63-2.078 3.38-2.493 5.258-.198.894.17 3.098-.275 3.83-.48.79-2.296 1.515-3.069 2.102-1.567 1.188-2.924 2.53-4.18 4.047-2.666 3.222-4.133 6.587-5.368 10.572-4.102 13.245-4.45 28.998.854 42.004.707 1.734 2.898 5.352 4.186 1.638.255-.734-.334-3.194-.333-3.935.005-2.72 1.506-20.729 8.047-30.817 2.13-3.284 11.973-15.58 13.984-15.68 1.065 1.693 11.88 12.51 39.942 11.242 12.662-.572 22.4-6.26 24.738-8.727 1.028 5.533 12.992 13.816 14.815 17.224 5.267 9.846 6.435 30.304 8.445 30.265 2.01-.038 3.453-5.237 3.867-6.23 3.072-7.375 3.595-16.632 3.267-24.559-.427-10.202-4.638-21.226-12.235-28.22z" fill="#2C1B18"/></g></g></svg>

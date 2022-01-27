@@ -1,0 +1,8 @@
+.error__wrapper {
+  padding: 2rem;
+  background-color: rgb(212, 212, 212);
+  text-align: center;
+  font-size: 3.5rem;
+  text-transform: capitalize;
+  color: rgb(219, 0, 0);
+}

@@ -1,0 +1,9 @@
+.profileGrid__wrapper {
+  padding: 1rem;
+}
+
+@media screen and (max-width: 300px) {
+  .profileGrid__wrapper {
+    padding: 1rem 0;
+  }
+}
